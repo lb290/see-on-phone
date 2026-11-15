@@ -1885,6 +1885,9 @@ public class EyeService extends Service implements CameraEngine.Sink, HttpServer
     public String setConfig(Map<String, String> q) {
         if (q.containsKey("clear")) cfg.setKey("");
         if (q.containsKey("key")) cfg.setKey(q.get("key"));
+        // 先切服务商（会写它自己的默认端点/模型），再让显式传的 base/model 覆盖 ——
+        // 这样 `?provider=opencode-go` 一条就够，想微调再带 base/model。
+        if (q.containsKey("provider")) cfg.setProvider(q.get("provider"));
         if (q.containsKey("base")) cfg.setBase(q.get("base"));
         if (q.containsKey("model")) cfg.setModel(q.get("model"));
         if (q.containsKey("think")) cfg.setThink(q.get("think"));

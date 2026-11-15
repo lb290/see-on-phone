@@ -238,7 +238,9 @@ public class SettingsActivity extends AppActivity {
             new Runnable() { public void run() { portable(); } });
 
         head("关于");
-        row("gear", "接口", null, shortModel() + " · " + (cfg.direct() ? "key 已填" : "还没填 key"),
+        row("gear", "接入方式", "DeepSeek / OpenCode Go / 自定义", cfg.providerLabel(),
+            new Runnable() { public void run() { providerDialog(); } });
+        row("gear", "接口", cfg.direct() ? "key 已填" : "还没填 key", shortModel(),
             new Runnable() { public void run() { apiDialog(); } });
         row("check", "版本", "端口 4444", BuildConfig.version(this), null);
         row("copy", "许可", "Apache-2.0 · 第三方署名", "查看",
@@ -1052,18 +1054,47 @@ public class SettingsActivity extends AppActivity {
     }
 
     /**
+     * 接入方式：DeepSeek / OpenCode Go / 自定义。
+     *
+     * 切过去顺手把端点和模型换成那一家的默认值（「自定义」不动，留给手填）；
+     * **key 不清** —— key 跟账号走，清掉只会让人以为"要重新买"。
+     */
+    private void providerDialog() {
+        final String[] items = new String[Config.PROVIDERS.length];
+        for (int i = 0; i < Config.PROVIDERS.length; i += 1) {
+            items[i] = Config.PROVIDER_LABEL[i];
+            if (Config.PROVIDERS[i].equals(cfg.provider())) items[i] = items[i] + "（当前）";
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("接入方式")
+            .setItems(items, new DialogInterface.OnClickListener() {
+                public void onClick(DialogInterface d, int which) {
+                    cfg.setProvider(Config.PROVIDERS[which]);
+                    apply();
+                    toast("换成 " + Config.PROVIDER_LABEL[which]);
+                }
+            })
+            .setNegativeButton("算了", null)
+            .show();
+    }
+
+    /**
      * 接口：key / 端点 / 模型。
      *
      * 手机键盘打 key 很痛苦，所以除了这里，还有 `GET /config?key=...` 那条路
      * （adb forward 之后一条 curl 就设好）。
+     *
+     * OpenCode Go 与 DeepSeek 的差别**只在端点和一个路由头**：两边都是 OpenAI 兼容的
+     * `/chat/completions`，所以这里不多加字段，只给一排"能看图的模型"快捷选项。
      */
     private void apiDialog() {
+        final boolean oc = cfg.opencode();
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(dp(16), dp(8), dp(16), dp(8));
 
         final EditText key = new EditText(this);
-        key.setHint("API key（sk-…）");
+        key.setHint(oc ? "API key（oc_sk_…）" : "API key（sk-…）");
         key.setText(cfg.apiKey());
         key.setSingleLine(true);
         key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -1081,16 +1112,47 @@ public class SettingsActivity extends AppActivity {
         model.setSingleLine(true);
         col.addView(model);
 
+        if (oc) {
+            TextView pick = new TextView(this);
+            pick.setText("从 OpenCode 能看图的模型里选…");
+            pick.setTextSize(13);
+            pick.setTextColor(Theme.ACCENT);
+            pick.setPadding(0, dp(8), 0, 0);
+            pick.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    new AlertDialog.Builder(SettingsActivity.this)
+                        .setTitle("能看图的模型")
+                        .setItems(Config.OPENCODE_VISION_MODELS, new DialogInterface.OnClickListener() {
+                            public void onClick(DialogInterface d, int which) {
+                                model.setText(Config.OPENCODE_VISION_MODELS[which]);
+                            }
+                        })
+                        .setNegativeButton("算了", null)
+                        .show();
+                }
+            });
+            col.addView(pick);
+        }
+
         TextView tip = new TextView(this);
-        tip.setText("填了 key 才能用。模型默认 deepseek-v4-flash"
-            + "（旧名 deepseek-chat 已弃用，会自动映射到非思考模式）。");
+        if (oc) {
+            tip.setText("OpenCode Go：端点已填 " + Config.OPENCODE_BASE + "（OpenAI 兼容）。\n"
+                + "路由头 x-opencode-session 会按会话自动带上 —— 缺它服务端直接 400。\n"
+                + "模型必须能看图，否则 look 抓的宫格发过去它看不见。");
+        } else if (Config.PROVIDER_DEEPSEEK.equals(cfg.provider())) {
+            tip.setText("填了 key 才能用。模型默认 " + Config.DEFAULT_MODEL
+                + "（旧名 deepseek-chat 已弃用，会自动映射到非思考模式）。");
+        } else {
+            tip.setText("任何 OpenAI 兼容端点都行：App 会在这后面拼 /chat/completions。\n"
+                + "模型要支持图片输入（look 抓的宫格按 image_url 发）。");
+        }
         tip.setTextColor(Theme.TEXT_DIM);
         tip.setTextSize(Theme.T_TINY);
         tip.setPadding(0, dp(8), 0, 0);
         col.addView(tip);
 
         new AlertDialog.Builder(this)
-            .setTitle("接口")
+            .setTitle("接口 · " + cfg.providerLabel())
             .setView(col)
             .setPositiveButton("保存", new DialogInterface.OnClickListener() {
                 public void onClick(DialogInterface d, int which) {

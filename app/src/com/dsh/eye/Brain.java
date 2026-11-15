@@ -118,7 +118,7 @@ final class Brain {
         EyeLog.w("brain", "think=" + think + " msgs=" + messages.length()
             + " tools=" + (tools == null ? 0 : tools.length())
             + " max=" + maxTokens + " chars=" + body.toString().length());
-        String raw = post(cfg.apiBase(), cfg.apiKey(), body.toString(),
+        String raw = post(cfg, body.toString(),
             // 大上下文要等更久：1M token 的输入光服务端预填就要几十秒。
             // 只在请求变大时**放宽**，绝不放宽普通过程的设置值。
             Math.max(readTimeoutMs, 20_000 + body.toString().length() / 30));
@@ -154,14 +154,14 @@ final class Brain {
         return b;
     }
 
-    private static String post(String base, String key, String body) throws Exception {
-        return post(base, key, body, readTimeoutMs);
+    private static String post(Config cfg, String body) throws Exception {
+        return post(cfg, body, readTimeoutMs);
     }
 
-    private static String post(String base, String key, String body, int timeoutMs) throws Exception {
+    private static String post(Config cfg, String body, int timeoutMs) throws Exception {
         HttpURLConnection c = null;
         try {
-            String url = trimSlash(base) + "/chat/completions";
+            String url = endpointBase(cfg) + "/chat/completions";
             c = (HttpURLConnection) new URL(url).openConnection();
             inFlight = c;
             c.setRequestMethod("POST");
@@ -169,7 +169,8 @@ final class Brain {
             c.setReadTimeout(Math.max(10_000, timeoutMs));
             c.setDoOutput(true);
             c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            c.setRequestProperty("Authorization", "Bearer " + key);
+            c.setRequestProperty("Authorization", "Bearer " + cfg.apiKey());
+            opencodeSession(c, cfg);
             c.setRequestProperty("Accept", "application/json");
             OutputStream out = c.getOutputStream();
             out.write(body.getBytes("UTF-8"));
@@ -182,6 +183,17 @@ final class Brain {
             if (inFlight == c) inFlight = null;
             if (c != null) { try { c.disconnect(); } catch (Throwable ignored) { } }
         }
+    }
+
+    /**
+     * OpenCode Go 的**必需**路由头。
+     *
+     * 实测（2026-11-15）：不带它直接 400，
+     * `{"type":"error","error":{"type":"MissingSessionID", ...}}`。
+     * 值由 {@link Config#sessionId()} 按会话给，别的端点不发这个头。
+     */
+    private static void opencodeSession(HttpURLConnection c, Config cfg) {
+        if (cfg.opencode()) c.setRequestProperty("x-opencode-session", cfg.sessionId());
     }
 
     // ---------------------------------------------------------------- 流式
@@ -238,7 +250,7 @@ final class Brain {
         boolean gotData = false;
 
         try {
-            String url = trimSlash(cfg.apiBase()) + "/chat/completions";
+            String url = endpointBase(cfg) + "/chat/completions";
             c = (HttpURLConnection) new URL(url).openConnection();
             inFlight = c;
             c.setRequestMethod("POST");
@@ -247,6 +259,7 @@ final class Brain {
             c.setDoOutput(true);
             c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             c.setRequestProperty("Authorization", "Bearer " + cfg.apiKey());
+            opencodeSession(c, cfg);
             c.setRequestProperty("Accept", "text/event-stream");
             OutputStream o = c.getOutputStream();
             o.write(body.toString().getBytes("UTF-8"));
@@ -429,7 +442,7 @@ final class Brain {
             msgs.put(new JSONObject().put("role", "system").put("content", sys));
             msgs.put(new JSONObject().put("role", "user").put("content", oldText));
             JSONObject body = build(cfg.apiModel(), msgs, "off", Math.max(300, maxChars * 2), null);
-            String resp = post(cfg.apiBase(), cfg.apiKey(), body.toString());
+            String resp = post(cfg, body.toString());
             Resp r = parse(resp);
             String content = r.text == null ? "" : r.text.trim();
             return content.length() == 0 ? null : content;
@@ -440,6 +453,23 @@ final class Brain {
     }
 
     // ---------------------------------------------------------------- 小工具
+
+    /**
+     * 拼请求地址前，把 base 收拾成能直接接 `/chat/completions` 的根。
+     *
+     * 两种常见填法必须容忍（否则是 404，而 App 里只会显示成"没答上"）：
+     *   · 贴了完整地址 `…/chat/completions` —— 去掉尾巴，别拼成两遍；
+     *   · OpenCode Go 只填到 `…/inference/go` —— 它的 OpenAI 兼容面在 `/go/v1`，补上。
+     */
+    private static String endpointBase(Config cfg) {
+        String b = trimSlash(cfg.apiBase());
+        String tail = "/chat/completions";
+        if (b.toLowerCase(java.util.Locale.ROOT).endsWith(tail)) {
+            b = b.substring(0, b.length() - tail.length());
+        }
+        if (cfg.opencode() && b.toLowerCase(java.util.Locale.ROOT).endsWith("/go")) b = b + "/v1";
+        return trimSlash(b);
+    }
 
     private static String trimSlash(String s) {
         String t = s == null ? "" : s.trim();

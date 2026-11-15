@@ -26,6 +26,14 @@ final class Config {
     private static final String K_BASE = "apiBase";
     private static final String K_MODEL = "apiModel";
 
+    /**
+     * 接哪个端点（见 provider()）。老配置没有这个键 —— 按 base 推断，
+     * 升级不需要迁移脚本。
+     */
+    private static final String K_PROVIDER = "provider";
+    /** OpenCode Go 的路由 id（x-opencode-session），见 sessionId()。 */
+    private static final String K_OC_SESSION = "ocSession";
+
     /** 思考强度：off | low | medium | high。默认 low（够用又不至于等太久）。 */
     private static final String K_THINK = "think";
     /** 念不念出来。 */
@@ -88,6 +96,32 @@ final class Config {
     /** v4 起默认走 flash：`deepseek-chat` 已于 2026-07-24 弃用（映射到它的非思考模式）。 */
     static final String DEFAULT_MODEL = "deepseek-v4-flash";
     static final String DEFAULT_VOICE = "";
+
+    // ---------------------------------------------------------------- 服务商
+
+    static final String PROVIDER_DEEPSEEK = "deepseek";
+    static final String PROVIDER_OPENCODE_GO = "opencode-go";
+    static final String PROVIDER_CUSTOM = "custom";
+    /** 设置页的取值顺序。 */
+    static final String[] PROVIDERS = { PROVIDER_DEEPSEEK, PROVIDER_OPENCODE_GO, PROVIDER_CUSTOM };
+    static final String[] PROVIDER_LABEL = { "DeepSeek", "OpenCode Go", "自定义" };
+
+    /**
+     * OpenCode Go 的 OpenAI 兼容端点（Claude / Gemini 那批走别的协议，这里不支持）。
+     * App 会在这后面拼 `/chat/completions`。
+     */
+    static final String OPENCODE_BASE = "https://opencode.ai/inference/go/v1";
+    /** OpenCode Go 上默认用它：能看图 + 支持思考 + 走 OpenAI 兼容协议。 */
+    static final String OPENCODE_MODEL = "deepseek-v4.1-flash";
+    /**
+     * OpenCode Go 上**能看图**（input 含 image）且走 OpenAI 兼容协议的模型，
+     * 设置页给一排快捷选项。名单来自 pi-ai 的 opencode-go.json。
+     */
+    static final String[] OPENCODE_VISION_MODELS = {
+        "deepseek-v4.1-flash", "glm-5.3-flash", "kimi-k2.7-code", "kimi-k3",
+        "longcat-2.5-preview-free", "mimo-v2.6-flash", "mimo-v2.6-pro",
+        "space-bunny", "step-5-preview-free"
+    };
 
     /** 思考四档。顺序就是设置页的循环顺序。 */
     static final String[] THINK = { "off", "low", "medium", "high" };
@@ -162,12 +196,108 @@ final class Config {
     }
 
     String apiKey() { return sp.getString(K_KEY, ""); }
-    String apiBase() { return or(sp.getString(K_BASE, DEFAULT_BASE), DEFAULT_BASE); }
-    String apiModel() { return or(sp.getString(K_MODEL, DEFAULT_MODEL), DEFAULT_MODEL); }
+    String apiBase() { return or(sp.getString(K_BASE, ""), defaultBase()); }
+    String apiModel() { return or(sp.getString(K_MODEL, ""), defaultModel()); }
 
     void setKey(String v) { sp.edit().putString(K_KEY, v == null ? "" : v.trim()).apply(); }
-    void setBase(String v) { sp.edit().putString(K_BASE, v == null ? "" : v.trim()).apply(); }
+
+    /**
+     * 改端点。**如果改出来的端点已经不属于当前服务商，就自动降级成「自定义」** ——
+     * 否则设置页会显示着 "DeepSeek"，实际连的是别的地方，排障时最容易被这一行骗。
+     * OpenCode Go 只认 opencode.ai 的地址（路由头也靠它判断）。
+     */
+    void setBase(String v) {
+        String b = v == null ? "" : v.trim();
+        String p = provider();
+        SharedPreferences.Editor e = sp.edit().putString(K_BASE, b);
+        boolean keep = true;
+        if (PROVIDER_DEEPSEEK.equals(p)) keep = sameBase(b, DEFAULT_BASE);
+        else if (PROVIDER_OPENCODE_GO.equals(p)) keep = b.toLowerCase(java.util.Locale.ROOT).contains("opencode.ai");
+        if (!keep) e.putString(K_PROVIDER, PROVIDER_CUSTOM);
+        e.apply();
+    }
+
     void setModel(String v) { sp.edit().putString(K_MODEL, v == null ? "" : v.trim()).apply(); }
+
+    /**
+     * 当前服务商。**没有存过这个键的老配置按端点推断**（不复写，读的时候推就行）：
+     *   · 空 / api.deepseek.com → DeepSeek
+     *   · 含 opencode.ai        → OpenCode Go
+     *   · 其它                  → 自定义
+     */
+    String provider() {
+        String v = sp.getString(K_PROVIDER, "");
+        for (String p : PROVIDERS) if (p.equals(v)) return p;
+        String b = or(sp.getString(K_BASE, ""), "").toLowerCase(java.util.Locale.ROOT);
+        if (b.contains("opencode.ai")) return PROVIDER_OPENCODE_GO;
+        if (b.length() == 0 || b.contains("deepseek.com")) return PROVIDER_DEEPSEEK;
+        return PROVIDER_CUSTOM;
+    }
+
+    static String providerLabel(String p) {
+        for (int i = 0; i < PROVIDERS.length; i += 1) if (PROVIDERS[i].equals(p)) return PROVIDER_LABEL[i];
+        return PROVIDER_LABEL[2];
+    }
+
+    String providerLabel() { return providerLabel(provider()); }
+
+    /**
+     * 切服务商：顺手把端点 / 模型换成那一家的默认值（「自定义」不动，留给手填）。
+     * 这里**直接写 prefs**，不走 setBase —— 否则刚切换就被判成「自定义」。
+     */
+    void setProvider(String v) {
+        String p = PROVIDER_CUSTOM;
+        for (String ok : PROVIDERS) if (ok.equals(v)) p = ok;
+        SharedPreferences.Editor e = sp.edit().putString(K_PROVIDER, p);
+        if (PROVIDER_DEEPSEEK.equals(p)) {
+            e.putString(K_BASE, DEFAULT_BASE).putString(K_MODEL, DEFAULT_MODEL);
+        } else if (PROVIDER_OPENCODE_GO.equals(p)) {
+            e.putString(K_BASE, OPENCODE_BASE).putString(K_MODEL, OPENCODE_MODEL);
+        }
+        e.apply();
+    }
+
+    /** 这个端点是不是 OpenCode Go（决定 Brain 要不要带 x-opencode-session）。 */
+    boolean opencode() {
+        if (PROVIDER_OPENCODE_GO.equals(provider())) return true;
+        return apiBase().toLowerCase(java.util.Locale.ROOT).contains("opencode.ai");
+    }
+
+    /**
+     * OpenCode Go 的**每会话路由 id**。
+     *
+     * 服务端缺 `x-opencode-session` 直接 400（MissingSessionID："Request is missing
+     * x-opencode-session and cannot be routed efficiently"）。值只要稳定、不重复就行：
+     * 同一会话一直用同一个（路由 / 缓存友好），新建会话就换一个。
+     */
+    String sessionId() {
+        String conv = convId();
+        if (conv.length() > 0) return "see-" + conv;
+        String s = sp.getString(K_OC_SESSION, "");
+        if (s == null || s.trim().length() == 0) {
+            s = "see-" + java.util.UUID.randomUUID().toString();
+            sp.edit().putString(K_OC_SESSION, s).apply();
+        }
+        return s;
+    }
+
+    private String defaultBase() {
+        return PROVIDER_OPENCODE_GO.equals(provider()) ? OPENCODE_BASE : DEFAULT_BASE;
+    }
+
+    private String defaultModel() {
+        return PROVIDER_OPENCODE_GO.equals(provider()) ? OPENCODE_MODEL : DEFAULT_MODEL;
+    }
+
+    private static boolean sameBase(String a, String b) {
+        return stripSlash(a).equalsIgnoreCase(stripSlash(b));
+    }
+
+    private static String stripSlash(String s) {
+        String t = s == null ? "" : s.trim();
+        while (t.endsWith("/")) t = t.substring(0, t.length() - 1);
+        return t;
+    }
 
     /** 填了 key 就走直连。**没 key 什么都干不了**（v4 删掉了 dsh-go 桥那条路）。 */
     boolean direct() {
@@ -537,7 +667,8 @@ final class Config {
         if (key.length() == 0) masked = "(空)";
         else if (key.length() <= 10) masked = "***";
         else masked = key.substring(0, 6) + "…" + key.substring(key.length() - 4);
-        return "key=" + masked
+        return "provider=" + provider()
+            + "\nkey=" + masked
             + "\nbase=" + apiBase()
             + "\nmodel=" + apiModel()
             + "\nthink=" + think()

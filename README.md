@@ -51,7 +51,7 @@
 
 | 你想要 | 下这个 | 还需要 |
 |---|---|---|
-| 手机上有个能聊天、能看东西的 AI | `see-on-phone-<ver>.apk` | 一个 OpenAI 兼容的 API Key |
+| 手机上有个能聊天、能看东西的 AI | `see-on-phone-<ver>.apk` | 一个 OpenAI 兼容的 API Key（DeepSeek / OpenCode Go 都行） |
 | 让电脑上的 agent 借手机的眼睛 | `dsh-see-on-phone-<ver>.tgz` | **必须先装上面那个 APK**（手机就是服务端） |
 | 两个都要 | 两个都下 | 同上 |
 
@@ -109,9 +109,13 @@
 # 1. 从 Releases 下 APK，然后
 adb install -r see-on-phone-<ver>.apk
 
-# 2. 打开「鱼眼」→ 右上角齿轮 → 填接口和 Key
-#    接口：https://api.deepseek.com/v1        （任何 OpenAI 兼容端点都行）
-#    模型：deepseek-chat
+# 2. 打开「鱼眼」→ 右上角齿轮 → 「接入方式」选一家，再填 Key：
+#    DeepSeek    端点 https://api.deepseek.com             模型 deepseek-v4-flash
+#    OpenCode Go 端点 https://opencode.ai/inference/go/v1  模型 deepseek-v4.1-flash
+#    自定义      任何 OpenAI 兼容端点（App 会拼 /chat/completions）
+#
+#    OpenCode Go 的路由头 x-opencode-session 按会话自动带（缺了服务端直接 400）；
+#    它的 key 形如 oc_sk_…，模型要选「能看图」的那批，否则 look 抓的宫格它看不见。
 ```
 
 第一次点"看"会申请相机权限。**装在应用商店之外**（sideload），系统会提示风险，正常。

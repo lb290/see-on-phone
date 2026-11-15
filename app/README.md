@@ -168,7 +168,7 @@ bash tools/parity/render.sh    # 真画成 PNG 放到 tools/parity/out/，用眼
 | `GET /look?seconds=` | **现场拼一张宫格**，返回 `{images:[b64], frames, tokens, why, canvas}` |
 | `GET /say?text=` | 朗读 |
 | `GET /ask?text=` | 让手机当场回答（走完整工具循环） |
-| `GET /config?key=&model=&think=` | 改接口 / 模型 / 思考档 |
+| `GET /config?key=&base=&model=&think=&provider=` | 改接口 / 模型 / 思考档（`provider=opencode-go` 一条切到 OpenCode Go） |
 | `GET /?peek=1` | 排障：把所有配置键原样吐出来 |
 
 `/video/mjpeg` 和 `/frame.jpg` 的语义刻意与 IP Camera 那类 App 对齐 ——
